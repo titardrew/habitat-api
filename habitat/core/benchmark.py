@@ -23,8 +23,8 @@ class Benchmark:
 
 
     Args:
-        config_file: file to be used for creating the environment.
-        config_dir: directory where config_file is located.
+        config_paths: file to be used for creating the environment.
+        config_dir: directory where config_paths is located.
     """
 
     def __init__(

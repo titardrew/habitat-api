@@ -17,7 +17,7 @@ from habitat.datasets.pointnav.pointnav_dataset import PointNavDatasetV1
 from habitat.sims.habitat_simulator import SimulatorActions
 from habitat.tasks.nav.nav_task import NavigationEpisode, NavigationGoal
 
-CFG_TEST = "test/habitat_all_sensors_test.yaml"
+CFG_TEST = "configs/test/habitat_all_sensors_test.yaml"
 NUM_ENVS = 4
 
 
@@ -221,6 +221,7 @@ def test_rl_vectorized_envs():
         assert len(rewards) == num_envs
         assert len(dones) == num_envs
         assert len(infos) == num_envs
+        assert envs.render(mode="rgb_array"), "vector env render is broken"
         if (i + 1) % configs[0].ENVIRONMENT.MAX_EPISODE_STEPS == 0:
             assert all(dones), "dones should be true after max_episode steps"
 

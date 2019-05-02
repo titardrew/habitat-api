@@ -515,10 +515,10 @@ class VectorEnv:
 
         If `num_envs` is None, it is equal to the total number of environments.
         """
-        for write_fn in self._connection_write_fns[:num_envs]:
+        for write_fn in self._connection_write_fns:
             write_fn((RENDER_COMMAND, (args, {"mode": "rgb", **kwargs})))
-        images = [read_fn() for read_fn in
-                  self._connection_read_fns[:num_envs]]
+        images = [read_fn() for read_fn in self._connection_read_fns]
+        tile = tile_images(images)
         if mode == "human":
             import cv2
             cv2.imshow("vecenv", tile_images(images)[:, :, ::-1])
