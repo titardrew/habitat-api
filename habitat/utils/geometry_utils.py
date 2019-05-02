@@ -35,6 +35,9 @@ def quaternion_from_two_vectors(v0: np.array, v1: np.array) -> np.quaternion:
     s = np.sqrt((1 + c) * 2)
     return np.quaternion(s * 0.5, *(axis / s))
 
+def get_2d_angle_from_quaternion(q: np.quaternion):
+    return 2 * np.arccos(q.w)
+
 
 def quaternion_xyzw_to_wxyz(v: np.array):
     return np.quaternion(v[3], *v[0:3])

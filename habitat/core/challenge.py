@@ -19,3 +19,4 @@ class Challenge(Benchmark):
         metrics = super().evaluate(agent)
         for k, v in metrics.items():
             logger.info("{}: {}".format(k, v))
+        return metrics

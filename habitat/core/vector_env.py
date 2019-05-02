@@ -17,6 +17,8 @@ from habitat.config import Config
 from habitat.core.env import Env, Observations
 from habitat.core.logging import logger
 from habitat.core.utils import tile_images
+from habitat.utils.visualizations.maps import get_topdown_map
+from habitat.utils.geometry_utils import get_2d_angle_from_quaternion
 import gym
 
 STEP_COMMAND = "step"
@@ -26,7 +28,10 @@ CLOSE_COMMAND = "close"
 OBSERVATION_SPACE_COMMAND = "observation_space"
 ACTION_SPACE_COMMAND = "action_space"
 CALL_COMMAND = "call"
-
+AGENT_STATE_COMMAND = "agent_state"
+TOP_DOWN_MAP_COMMAND = "top_down_map"
+GOAL_POS_COMMAND = "goal_pos"
+ATTRUBUTE_COMMAND = "attribute"
 
 def _make_env_fn(
     config: Config, dataset: Optional[habitat.Dataset] = None, rank: int = 0
@@ -184,6 +189,41 @@ class VectorEnv:
                         result = getattr(env, function_name)()
                     else:
                         result = getattr(env, function_name)(*function_args)
+                    connection_write_fn(result)
+
+                elif command == AGENT_STATE_COMMAND:
+                    if isinstance(env, habitat.RLEnv):
+                        _env = env.habitat_env
+                    else:
+                        _env = env
+                    state = _env.sim.get_agent_state()
+                    angle = get_2d_angle_from_quaternion(state.rotation)
+                    result = {'position': state.position,
+                              '2d_angle': angle}
+                    connection_write_fn(result)
+
+                elif command == GOAL_POS_COMMAND:
+                    if isinstance(env, habitat.RLEnv):
+                        _env = env.habitat_env
+                    else:
+                        _env = env
+                    result = _env.current_episode.goals[0].position
+                    connection_write_fn(result)
+
+                elif command == ATTRUBUTE_COMMAND:
+                    if isinstance(env, habitat.RLEnv):
+                        _env = env.habitat_env
+                    else:
+                        _env = env
+                    result = getattr(_env, data)
+                    connection_write_fn(result)
+
+                elif command == TOP_DOWN_MAP_COMMAND:
+                    if isinstance(env, habitat.RLEnv):
+                        _env = env.habitat_env
+                    else:
+                        _env = env
+                    result = get_topdown_map(_env.sim)
                     connection_write_fn(result)
                 else:
                     raise NotImplementedError
@@ -403,23 +443,89 @@ class VectorEnv:
         self._is_waiting = False
         return results
 
+    def get_state_at(
+        self,
+        index: int,
+    ) -> List[Any]:
+
+        self._is_waiting = True
+        self._connection_write_fns[index](
+            (AGENT_STATE_COMMAND, None)
+        )
+        result = self._connection_read_fns[index]()
+        self._is_waiting = False
+        return result
+
+    def get_goal_pos_at(
+        self,
+        index: int,
+    ) -> List[Any]:
+
+        self._is_waiting = True
+        self._connection_write_fns[index](
+            (GOAL_POS_COMMAND, None)
+        )
+        result = self._connection_read_fns[index]()
+        self._is_waiting = False
+        return result
+
+    def get_topdown_map_at(
+        self,
+        index: int,
+    ) -> List[Any]:
+
+        self._is_waiting = True
+        self._connection_write_fns[index](
+            (TOP_DOWN_MAP_COMMAND, None)
+        )
+        result = self._connection_read_fns[index]()
+        self._is_waiting = False
+        return result
+
+    def get_attr_at(self, index: int, data: str):
+        self._is_waiting = True
+        self._connection_write_fns[index](
+            (ATTRUBUTE_COMMAND, data)
+        )
+        result = self._connection_read_fns[index]()
+        self._is_waiting = False
+        return result
+
+    @property
+    def episodes(self):
+        return self.get_attr_at(0, 'episodes')
+
+    @property
+    def episode_over(self):
+        return [self.get_attr_at(idx, 'episode_over')
+                for idx in range(self.num_envs)]
+
+    def get_metrics(self):
+        return self.call_at(0, 'get_metrics', None)
+
     def render(
-        self, mode: str = "human", *args, **kwargs
+        self,
+        mode: str = "human",
+        num_envs: Optional[int] = None,
+        tile: bool = True,
+        *args,
+        **kwargs
     ) -> Union[np.ndarray, None]:
-        """Render observations from all environments in a tiled image.
+        """Render observations from `num_envs` environments in a tiled image.
+
+        If `num_envs` is None, it is equal to the total number of environments.
         """
-        for write_fn in self._connection_write_fns:
-            write_fn((args, {"mode": "rgb_array", **kwargs}))
-        images = [read_fn() for read_fn in self._connection_read_fns]
-        tile = tile_images(images)
+        for write_fn in self._connection_write_fns[:num_envs]:
+            write_fn((RENDER_COMMAND, (args, {"mode": "rgb", **kwargs})))
+        images = [read_fn() for read_fn in
+                  self._connection_read_fns[:num_envs]]
         if mode == "human":
             import cv2
-
-            cv2.imshow("vecenv", tile[:, :, ::-1])
+            cv2.imshow("vecenv", tile_images(images)[:, :, ::-1])
             cv2.waitKey(1)
             return None
         elif mode == "rgb_array":
-            return tile
+            return tile_images(images) if tile else images
         else:
             raise NotImplementedError
 
@@ -467,3 +573,119 @@ class ThreadedVectorEnv(VectorEnv):
             [q.get for q in parent_read_queues],
             [q.put for q in parent_write_queues],
         )
+
+
+class DummyVectorEnv(VectorEnv):
+    def __init__(
+        self,
+        make_env_fn: Callable[[Any], Env] = _make_env_fn,
+        env_fn_args: Tuple = None,
+        auto_reset_done: bool = True,
+        multiprocessing_start_method: str = "forkserver"
+    ) -> None:
+
+        super().__init__(make_env_fn,
+                         (env_fn_args,),
+                         auto_reset_done,
+                         multiprocessing_start_method)
+
+
+class VectorWrapper(VectorEnv):
+
+    def __init__(self, vector_env: VectorEnv):
+        self.vector_env = vector_env
+        self.observation_spaces = vector_env.observation_spaces
+        self.action_spaces = vector_env.action_spaces
+
+    @property
+    def num_envs(self):
+        return self.vector_env.num_envs
+
+    def reset(self):
+        return self.vector_env.reset()
+
+    def reset_at(self, index_env: int):
+        return self.vector_env.reset_at(index_env)
+
+    def step_at(self, index_env: int, action: int):
+        return self.vector_env.step_at(index_env, action)
+
+    def async_step(self, actions: List[int]) -> None:
+        self.vector_env.async_step(actions)
+
+    def wait_step(self) -> List[Observations]:
+        return self.vector_env.wait_step()
+
+    @property
+    def episodes(self):
+        return self.vector_env.episodes
+
+    @property
+    def episode_over(self):
+        return self.vector_env.episode_over
+
+    def get_metrics(self):
+        return self.vector_env.get_metrics()
+
+    def step(self, actions: List[int]):
+        self.async_step(actions)
+        return self.wait_step()
+
+    def close(self) -> None:
+        self.vector_env.close()
+
+    def pause_at(self, index: int) -> None:
+        self.vector_env.pause_at(index)
+
+    def resume_all(self) -> None:
+        self.vector_env.resume_all()
+
+    def call_at(
+        self,
+        index: int,
+        function_name: str,
+        function_args: Optional[List[Any]] = None,
+    ) -> Any:
+        return self.vector_env.call_at(index,
+                                       function_name,
+                                       function_args)
+
+    def call(
+        self,
+        function_names: List[str],
+        function_args_list: Optional[List[Any]] = None
+    ) -> List[Any]:
+        return self.vector_env.call(function_names,
+                                    function_args_list)
+
+    def get_pos_at(
+        self,
+        index: int,
+    ) -> Any:
+        return self.vector_env.get_pos_at(index)
+
+    def get_goal_pos_at(
+        self,
+        index: int,
+    ) -> Any:
+        return self.vector_env.get_goal_pos_at(index)
+
+    def get_topdown_map_at(
+        self,
+        index: int,
+    ) -> Any:
+        return self.vector_env.get_topdown_map_at(index)
+
+    def render(
+        self,
+        mode: str = "human",
+        num_envs: Optional[int] = None,
+        tile: bool = True,
+        *args,
+        **kwargs
+    ) -> Union[np.ndarray, None]:
+        return self.vector_env.render(mode,
+                                      num_envs,
+                                      tile,
+                                      *args,
+                                      **kwargs)

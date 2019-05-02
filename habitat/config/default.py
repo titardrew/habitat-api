@@ -150,6 +150,20 @@ _C.DATASET.POINTNAVV1.DATA_PATH = (
     "data/datasets/pointnav/habitat-test-scenes/v1/{split}/{split}.json.gz"
 )
 _C.DATASET.POINTNAVV1.CONTENT_SCENES = ["*"]
+# -----------------------------------------------------------------------------
+# RECORDER
+# -----------------------------------------------------------------------------
+_C.RECORDER = CN()
+_C.RECORDER.DIR_PATH = (
+    "/home/titarenkoan/habitat-root/habitat-challenge/data/video_new"
+)
+_C.RECORDER.START_EVERY = 100000
+_C.RECORDER.VIDEO_LENGTH = 2000
+_C.RECORDER.LIST = ["top_down_map"]
+_C.RECORDER.MAIN = "rgb"
+_C.RECORDER.NUM_FOR_REC = 2
+_C.RECORDER.W = 512
+_C.RECORDER.H = 512
 
 
 # -----------------------------------------------------------------------------

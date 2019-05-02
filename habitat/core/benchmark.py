@@ -10,6 +10,12 @@ from typing import Dict, Optional
 from habitat.config.default import get_config, DEFAULT_CONFIG_DIR
 from habitat.core.agent import Agent
 from habitat.core.env import Env
+from habitat.core.vector_env import DummyVectorEnv
+from habitat.core.wrappers import VectorVideoRecorder
+
+
+def make_env_fn(config_env):
+    return Env(config=config_env)
 
 
 class Benchmark:
@@ -27,7 +33,10 @@ class Benchmark:
         config_dir: str = DEFAULT_CONFIG_DIR,
     ) -> None:
         config_env = get_config(config_file=config_file, config_dir=config_dir)
-        self._env = Env(config=config_env)
+        self._env = DummyVectorEnv(make_env_fn,
+                                   (config_env,),
+                                   auto_reset_done=False)
+        self._env = VectorVideoRecorder(self._env, config_env.RECORDER)
 
     def evaluate(
         self, agent: Agent, num_episodes: Optional[int] = None
@@ -59,11 +68,11 @@ class Benchmark:
         count_episodes = 0
         while count_episodes < num_episodes:
             agent.reset()
-            observations = self._env.reset()
+            observations = self._env.reset()[0]
 
-            while not self._env.episode_over:
+            while not self._env.episode_over[0]:
                 action = agent.act(observations)
-                observations = self._env.step(action)
+                observations = self._env.step([action])[0]
 
             metrics = self._env.get_metrics()
             for m, v in metrics.items():

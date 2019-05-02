@@ -23,6 +23,15 @@ AGENT_SPRITE = imageio.imread(
     )
 )
 AGENT_SPRITE = np.ascontiguousarray(np.flipud(AGENT_SPRITE))
+GOAL_SPRITE = imageio.imread(
+    os.path.join(
+        os.path.dirname(__file__),
+        "assets",
+        "maps_topdown_agent_sprite",
+        "100x100_goal.png",
+    )
+)
+GOAL_SPRITE = np.ascontiguousarray(np.flipud(GOAL_SPRITE))
 COORDINATE_EPSILON = 1e-6
 COORDINATE_MIN = -62.3241 - COORDINATE_EPSILON
 COORDINATE_MAX = 90.0399 + COORDINATE_EPSILON
@@ -77,6 +86,42 @@ def draw_agent(
         interpolation=cv2.INTER_LINEAR,
     )
     utils.paste_overlapping_image(image, resized_agent, agent_center_coord)
+
+    return image
+
+
+def draw_goal(
+    image: np.ndarray,
+    goal_center_coord: Tuple[int, int],
+    goal_radius_px: int = 5,
+) -> np.ndarray:
+    """Return an image with the agent image composited onto it.
+    Args:
+        image: the image onto which to put the agent.
+        agent_center_coord: the image coordinates where to paste the agent.
+        agent_rotation: the agent's current rotation in radians.
+        agent_radius_px: 1/2 number of pixels the agent will be resized to.
+    Returns:
+        The modified background image. This operation is in place.
+    """
+
+    # Rotate before resize to keep good resolution.
+    rotated_goal = scipy.ndimage.interpolation.rotate(
+        GOAL_SPRITE, 0 * 180 / np.pi
+    )
+    # Rescale because rotation may result in larger image than original, but
+    # the agent sprite size should stay the same.
+    # initial_goal_size = GOAL_SPRITE.shape[0]
+    # new_size = rotated_goal.shape[0]
+    goal_size_px = max(
+        1, int(goal_radius_px * 2)
+    )
+    resized_goal = cv2.resize(
+        rotated_goal,
+        (goal_size_px, goal_size_px),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    utils.paste_overlapping_image(image, resized_goal, goal_center_coord)
     return image
 
 
