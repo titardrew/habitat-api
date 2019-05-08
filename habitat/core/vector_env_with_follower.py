@@ -17,6 +17,7 @@ from habitat.config import Config
 from habitat.core.env import Env, Observations
 from habitat.core.logging import logger
 from habitat.core.utils import tile_images
+from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
 from habitat.utils.visualizations.maps import get_topdown_map
 from habitat.utils.geometry_utils import get_2d_angle_from_quaternion
 import gym
@@ -32,6 +33,7 @@ AGENT_STATE_COMMAND = "agent_state"
 TOP_DOWN_MAP_COMMAND = "top_down_map"
 GOAL_POS_COMMAND = "goal_pos"
 ATTRUBUTE_COMMAND = "attribute"
+BEST_ACTION = "best_action"
 
 def _make_env_fn(
     config: Config, dataset: Optional[habitat.Dataset] = None, rank: int = 0
@@ -51,7 +53,7 @@ def _make_env_fn(
     return habitat_env
 
 
-class VectorEnv:
+class VectorEnvWithFollower:
     """Vectorized environment which creates multiple processes where each
     process runs its own environment. All the environments are synchronized
     on step and reset methods.
@@ -146,6 +148,15 @@ class VectorEnv:
         r"""Process worker for creating and interacting with the environment.
         """
         env = env_fn(*env_fn_args)
+        goal_radius = env.episodes[0].goals[0].radius
+
+        if isinstance(env, habitat.RLEnv):
+            _env = env.habitat_env
+        else:
+            _env = env
+
+        follower = ShortestPathFollower(_env.sim, goal_radius, False)
+        follower.mode = "geodesic_path"
         if parent_pipe is not None:
             parent_pipe.close()
         try:
@@ -171,10 +182,7 @@ class VectorEnv:
                         raise NotImplementedError
 
                 elif command == RESET_COMMAND:
-                    if data is None:
-                        observations = env.reset()
-                    else:
-                        observations = env.reset(data)
+                    observations = env.reset()
                     connection_write_fn(observations)
 
                 elif command == RENDER_COMMAND:
@@ -195,10 +203,6 @@ class VectorEnv:
                     connection_write_fn(result)
 
                 elif command == AGENT_STATE_COMMAND:
-                    if isinstance(env, habitat.RLEnv):
-                        _env = env.habitat_env
-                    else:
-                        _env = env
                     state = _env.sim.get_agent_state()
                     angle = get_2d_angle_from_quaternion(state.rotation)
                     result = {'position': state.position,
@@ -206,29 +210,21 @@ class VectorEnv:
                     connection_write_fn(result)
 
                 elif command == GOAL_POS_COMMAND:
-                    if isinstance(env, habitat.RLEnv):
-                        _env = env.habitat_env
-                    else:
-                        _env = env
                     result = _env.current_episode.goals[0].position
                     connection_write_fn(result)
 
                 elif command == ATTRUBUTE_COMMAND:
-                    if isinstance(env, habitat.RLEnv):
-                        _env = env.habitat_env
-                    else:
-                        _env = env
                     result = getattr(_env, data)
                     connection_write_fn(result)
 
                 elif command == TOP_DOWN_MAP_COMMAND:
-                    if isinstance(env, habitat.RLEnv):
-                        _env = env.habitat_env
-                    else:
-                        _env = env
                     result = get_topdown_map(_env.sim)
                     connection_write_fn(result)
-
+                elif command == BEST_ACTION:
+                    result = follower.get_next_action(
+                            _env.current_episode.goals[0].position
+                    )
+                    connection_write_fn(result)
                 else:
                     raise NotImplementedError
 
@@ -447,6 +443,20 @@ class VectorEnv:
         self._is_waiting = False
         return results
 
+    def get_best_action(
+        self,
+    ) -> List[Any]:
+        self._is_waiting = True
+        for write_fn in zip(
+            self._connection_write_fns
+        ):
+            write_fn((BEST_ACTION, None))
+        results = []
+        for read_fn in self._connection_read_fns:
+            results.append(read_fn())
+        self._is_waiting = False
+        return results
+
     def get_state_at(
         self,
         index: int,
@@ -547,149 +557,152 @@ class VectorEnv:
         self.close()
 
 
-class ThreadedVectorEnv(VectorEnv):
-    def _spawn_workers(
-        self,
-        env_fn_args: Iterable[Tuple[Any, ...]],
-        make_env_fn: Callable[..., Env] = _make_env_fn,
-    ) -> Tuple[List[Callable[[], Any]], List[Callable[[Any], None]]]:
-        parent_read_queues, parent_write_queues = zip(
-            *[(Queue(), Queue()) for _ in range(self._num_envs)]
-        )
-        self._workers = []
-        for parent_read_queue, parent_write_queue, env_args in zip(
-            parent_read_queues, parent_write_queues, env_fn_args
-        ):
-            thread = Thread(
-                target=self._worker_env,
-                args=(
-                    parent_write_queue.get,
-                    parent_read_queue.put,
-                    make_env_fn,
-                    env_args,
-                    self._auto_reset_done,
-                ),
-            )
-            self._workers.append(thread)
-            thread.daemon = True
-            thread.start()
-        return (
-            [q.get for q in parent_read_queues],
-            [q.put for q in parent_write_queues],
-        )
+# class ThreadedVectorEnv(VectorEnv):
+#     def _spawn_workers(
+#         self,
+#         env_fn_args: Iterable[Tuple[Any, ...]],
+#         make_env_fn: Callable[..., Env] = _make_env_fn,
+#     ) -> Tuple[List[Callable[[], Any]], List[Callable[[Any], None]]]:
+#         parent_read_queues, parent_write_queues = zip(
+#             *[(Queue(), Queue()) for _ in range(self._num_envs)]
+#         )
+#         self._workers = []
+#         for parent_read_queue, parent_write_queue, env_args in zip(
+#             parent_read_queues, parent_write_queues, env_fn_args
+#         ):
+#             thread = Thread(
+#                 target=self._worker_env,
+#                 args=(
+#                     parent_write_queue.get,
+#                     parent_read_queue.put,
+#                     make_env_fn,
+#                     env_args,
+#                     self._auto_reset_done,
+#                 ),
+#             )
+#             self._workers.append(thread)
+#             thread.daemon = True
+#             thread.start()
+#         return (
+#             [q.get for q in parent_read_queues],
+#             [q.put for q in parent_write_queues],
+#         )
 
 
-class DummyVectorEnv(VectorEnv):
-    def __init__(
-        self,
-        make_env_fn: Callable[[Any], Env] = _make_env_fn,
-        env_fn_args: Tuple = None,
-        auto_reset_done: bool = True,
-        multiprocessing_start_method: str = "forkserver"
-    ) -> None:
+# class DummyVectorEnv(VectorEnv):
+#     def __init__(
+#         self,
+#         make_env_fn: Callable[[Any], Env] = _make_env_fn,
+#         env_fn_args: Tuple = None,
+#         auto_reset_done: bool = True,
+#         multiprocessing_start_method: str = "forkserver"
+#     ) -> None:
 
-        super().__init__(make_env_fn,
-                         (env_fn_args,),
-                         auto_reset_done,
-                         multiprocessing_start_method)
+#         super().__init__(make_env_fn,
+#                          (env_fn_args,),
+#                          auto_reset_done,
+#                          multiprocessing_start_method)
 
 
-class VectorWrapper(VectorEnv):
+# class VectorWrapper(VectorEnv):
 
-    def __init__(self, vector_env: VectorEnv):
-        self.vector_env = vector_env
-        self.observation_spaces = vector_env.observation_spaces
-        self.action_spaces = vector_env.action_spaces
+#     def __init__(self, vector_env: VectorEnv):
+#         self.vector_env = vector_env
+#         self.observation_spaces = vector_env.observation_spaces
+#         self.action_spaces = vector_env.action_spaces
 
-    @property
-    def num_envs(self):
-        return self.vector_env.num_envs
+#     @property
+#     def num_envs(self):
+#         return self.vector_env.num_envs
 
-    def reset(self, ):
-        return self.vector_env.reset()
+#     def reset(self):
+#         return self.vector_env.reset()
 
-    def reset_at(self, index_env: int):
-        return self.vector_env.reset_at(index_env)
+#     def reset_at(self, index_env: int):
+#         return self.vector_env.reset_at(index_env)
 
-    def step_at(self, index_env: int, action: int):
-        return self.vector_env.step_at(index_env, action)
+#     def step_at(self, index_env: int, action: int):
+#         return self.vector_env.step_at(index_env, action)
 
-    def async_step(self, actions: List[int]) -> None:
-        self.vector_env.async_step(actions)
+#     def async_step(self, actions: List[int]) -> None:
+#         self.vector_env.async_step(actions)
 
-    def wait_step(self) -> List[Observations]:
-        return self.vector_env.wait_step()
+#     def wait_step(self) -> List[Observations]:
+#         return self.vector_env.wait_step()
 
-    @property
-    def episodes(self):
-        return self.vector_env.episodes
+#     @property
+#     def episodes(self):
+#         return self.vector_env.episodes
 
-    @property
-    def episode_over(self):
-        return self.vector_env.episode_over
+#     @property
+#     def episode_over(self):
+#         return self.vector_env.episode_over
 
-    def get_metrics(self):
-        return self.vector_env.get_metrics()
+#     def get_metrics(self):
+#         return self.vector_env.get_metrics()
 
-    def step(self, actions: List[int]):
-        self.async_step(actions)
-        return self.wait_step()
+#     def step(self, actions: List[int]):
+#         self.async_step(actions)
+#         return self.wait_step()
 
-    def close(self) -> None:
-        self.vector_env.close()
+#     def close(self) -> None:
+#         self.vector_env.close()
 
-    def pause_at(self, index: int) -> None:
-        self.vector_env.pause_at(index)
+#     def pause_at(self, index: int) -> None:
+#         self.vector_env.pause_at(index)
 
-    def resume_all(self) -> None:
-        self.vector_env.resume_all()
+#     def resume_all(self) -> None:
+#         self.vector_env.resume_all()
 
-    def call_at(
-        self,
-        index: int,
-        function_name: str,
-        function_args: Optional[List[Any]] = None,
-    ) -> Any:
-        return self.vector_env.call_at(index,
-                                       function_name,
-                                       function_args)
+#     def call_at(
+#         self,
+#         index: int,
+#         function_name: str,
+#         function_args: Optional[List[Any]] = None,
+#     ) -> Any:
+#         return self.vector_env.call_at(index,
+#                                        function_name,
+#                                        function_args)
 
-    def call(
-        self,
-        function_names: List[str],
-        function_args_list: Optional[List[Any]] = None
-    ) -> List[Any]:
-        return self.vector_env.call(function_names,
-                                    function_args_list)
+#     def call(
+#         self,
+#         function_names: List[str],
+#         function_args_list: Optional[List[Any]] = None
+#     ) -> List[Any]:
+#         return self.vector_env.call(function_names,
+#                                     function_args_list)
 
-    def get_pos_at(
-        self,
-        index: int,
-    ) -> Any:
-        return self.vector_env.get_pos_at(index)
+#     def get_best_action(self):
+#         return self.vector_env.get_best_action()
 
-    def get_goal_pos_at(
-        self,
-        index: int,
-    ) -> Any:
-        return self.vector_env.get_goal_pos_at(index)
+#     def get_pos_at(
+#         self,
+#         index: int,
+#     ) -> Any:
+#         return self.vector_env.get_pos_at(index)
 
-    def get_topdown_map_at(
-        self,
-        index: int,
-    ) -> Any:
-        return self.vector_env.get_topdown_map_at(index)
+#     def get_goal_pos_at(
+#         self,
+#         index: int,
+#     ) -> Any:
+#         return self.vector_env.get_goal_pos_at(index)
 
-    def render(
-        self,
-        mode: str = "human",
-        num_envs: Optional[int] = None,
-        tile: bool = True,
-        *args,
-        **kwargs
-    ) -> Union[np.ndarray, None]:
-        return self.vector_env.render(mode,
-                                      num_envs,
-                                      tile,
-                                      *args,
-                                      **kwargs)
+#     def get_topdown_map_at(
+#         self,
+#         index: int,
+#     ) -> Any:
+#         return self.vector_env.get_topdown_map_at(index)
+
+#     def render(
+#         self,
+#         mode: str = "human",
+#         num_envs: Optional[int] = None,
+#         tile: bool = True,
+#         *args,
+#         **kwargs
+#     ) -> Union[np.ndarray, None]:
+#         return self.vector_env.render(mode,
+#                                       num_envs,
+#                                       tile,
+#                                       *args,
+#                                       **kwargs)

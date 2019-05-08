@@ -69,7 +69,7 @@ class Env:
             )
         self._episodes = self._dataset.episodes if self._dataset else []
 
-        # load the first scene if dataset is present
+        #  load the first scene if dataset is present
         if self._dataset:
             assert len(self._dataset.episodes) > 0, (
                 "dataset should have " "non-empty episodes list"
@@ -101,6 +101,7 @@ class Env:
         self._elapsed_steps = 0
         self._episode_start_time: Optional[float] = None
         self._episode_over = False
+        self.idx = None
 
     @property
     def current_episode(self) -> Type[Episode]:
@@ -108,7 +109,11 @@ class Env:
             self._current_episode_index is not None
             and self._current_episode_index < len(self._episodes)
         )
-        return self._episodes[self._current_episode_index]
+        if self.idx:
+            cur_epi = self.idx[self._current_episode_index]
+        else:
+            cur_epi = self._current_episode_index
+        return self._episodes[cur_epi]
 
     @property
     def episodes(self) -> List[Type[Episode]]:
@@ -182,14 +187,17 @@ class Env:
             self._current_episode_index = (
                 self._current_episode_index + 1
             ) % len(self._episodes)
-        self.reconfigure(self._config)
 
+
+        self.reconfigure(self._config)
         observations = self._sim.reset()
         observations.update(
             self.task.sensor_suite.get_observations(
                 observations=observations, episode=self.current_episode
             )
         )
+
+
 
         self._task.measurements.reset_measures(episode=self.current_episode)
 

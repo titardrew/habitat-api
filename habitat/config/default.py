@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 from typing import List, Optional, Union
+import os
 
 from habitat.config import Config as CN  # type: ignore
 
@@ -193,7 +194,8 @@ def get_config(
                 config_paths = [config_paths]
 
         for config_path in config_paths:
-            config.merge_from_file(config_path)
+            config.merge_from_file(os.path.join(DEFAULT_CONFIG_DIR, config_path))
+
 
     if opts:
         config.merge_from_list(opts)

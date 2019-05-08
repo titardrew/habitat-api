@@ -8,6 +8,7 @@ import gzip
 import json
 import os
 from typing import List, Optional
+import random
 
 from habitat.config import Config
 from habitat.core.dataset import Dataset
@@ -71,8 +72,11 @@ class PointNavDatasetV1(Dataset):
         scenes.sort()
         return scenes
 
-    def __init__(self, config: Optional[Config] = None) -> None:
+    def __init__(self,
+                 config: Optional[Config] = None,
+                 shuffle=False) -> None:
         self.episodes = []
+        self.shuffle = shuffle
 
         if config is None:
             return
@@ -92,6 +96,8 @@ class PointNavDatasetV1(Dataset):
                 dataset_dir=dataset_dir,
             )
 
+        if self.shuffle:
+            random.shuffle(scenes)
         for scene in scenes:
             scene_filename = self.content_scenes_path.format(
                 data_path=dataset_dir, scene=scene
@@ -102,6 +108,7 @@ class PointNavDatasetV1(Dataset):
     def from_json(
         self, json_str: str, scenes_dir: Optional[str] = None
     ) -> None:
+        episodes = []
         deserialized = json.loads(json_str)
         if CONTENT_SCENES_PATH_FIELD in deserialized:
             self.content_scenes_path = deserialized[CONTENT_SCENES_PATH_FIELD]
@@ -123,4 +130,7 @@ class PointNavDatasetV1(Dataset):
                 for path in episode.shortest_paths:
                     for p_index, point in enumerate(path):
                         path[p_index] = ShortestPathPoint(**point)
-            self.episodes.append(episode)
+            episodes.append(episode)
+        if self.shuffle:
+            random.shuffle(episodes)
+        self.episodes += episodes

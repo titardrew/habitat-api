@@ -32,7 +32,7 @@ class Benchmark:
         config_file: Optional[str] = None,
         config_dir: str = DEFAULT_CONFIG_DIR,
     ) -> None:
-        config_env = get_config(config_file=config_file, config_dir=config_dir)
+        config_env = get_config(config_paths=config_file)
         self._env = DummyVectorEnv(make_env_fn,
                                    (config_env,),
                                    auto_reset_done=False)

@@ -27,7 +27,7 @@ RECORDER:
   START_EVERY: 1000000000
   VIDEO_LENGTH: 10000
 DATASET:
-  TYPE: PointNav-v1
+  # TYPE: PointNav-v1
   SPLIT: val_mini
   POINTNAVV1:
     DATA_PATH: /home/titarenkoan/habitat-root/habitat-api/data/datasets/pointnav/gibson/v1/{split}/{split}.json.gz
