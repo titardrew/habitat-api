@@ -74,9 +74,11 @@ class PointNavDatasetV1(Dataset):
 
     def __init__(self,
                  config: Optional[Config] = None,
-                 shuffle=False) -> None:
+                 shuffle=False,
+                 allowed_difficulty=['easy', 'medium', 'hard']) -> None:
         self.episodes = []
         self.shuffle = shuffle
+        self.allowed_difficulty = allowed_difficulty
 
         if config is None:
             return
@@ -115,6 +117,9 @@ class PointNavDatasetV1(Dataset):
 
         for episode in deserialized["episodes"]:
             episode = NavigationEpisode(**episode)
+            if 'difficulty' in episode.info and \
+                    episode.info['difficulty'] not in self.allowed_difficulty:
+                continue
 
             if scenes_dir is not None:
                 if episode.scene_id.startswith(DEFAULT_SCENE_PATH_PREFIX):
